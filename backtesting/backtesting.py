@@ -698,16 +698,18 @@ class Trade:
 
 
 class _Broker:
-    def __init__(self, *, data, cash, commission, margin,
+    def __init__(self, *, data, cash, maker_commission, taker_commission, limit_activation, margin,
                  trade_on_close, hedging, exclusive_orders, index):
         assert 0 < cash, f"cash should be >0, is {cash}"
-        assert -.1 <= commission < .1, \
-            ("commission should be between -10% "
-             f"(e.g. market-maker's rebates) and 10% (fees), is {commission}")
+        # assert -.1 <= commission < .1, \
+        #     ("commission should be between -10% "
+        #      f"(e.g. market-maker's rebates) and 10% (fees), is {commission}")
         assert 0 < margin <= 1, f"margin should be between 0 and 1, is {margin}"
         self._data: _Data = data
         self._cash = cash
-        self._commission = commission
+        self._maker_commission = maker_commission
+        self._taker_commission = 
+        self._limit_activation = limit_activation
         self._leverage = 1 / margin
         self._trade_on_close = trade_on_close
         self._hedging = hedging
@@ -741,7 +743,7 @@ class _Broker:
         tp = tp and float(tp)
 
         is_long = size > 0
-        adjusted_price = self._adjusted_price(size)
+        adjusted_price = self._adjusted_price(size,maker=limit>0)
 
         if is_long:
             if not (sl or -np.inf) < (limit or stop or adjusted_price) < (tp or np.inf):
@@ -778,12 +780,13 @@ class _Broker:
         """ Price at the last (current) close. """
         return self._data.Close[-1]
 
-    def _adjusted_price(self, size=None, price=None) -> float:
+    def _adjusted_price(self, size=None, price=None, maker=False) -> float:
         """
         Long/short `price`, adjusted for commisions.
         In long positions, the adjusted price is a fraction higher, and vice versa.
         """
-        return (price or self.last_price) * (1 + self._commission * copysign(1, size))
+        return (price or self.last_price) * \
+            (1 + (self._maker_commission if maker else self._taker_commission) * copysign(1, size))
 
     @property
     def equity(self) -> float:
@@ -839,7 +842,7 @@ class _Broker:
             # Determine purchase price.
             # Check if limit order can be filled.
             if order.limit:
-                is_limit_hit = low < order.limit if order.is_long else high > order.limit
+                is_limit_hit = low + self._limit_activation < order.limit if order.is_long else high - self._limit_activation > order.limit
                 # When stop and limit are hit within the same bar, we pessimistically
                 # assume limit was hit before the stop (i.e. "before it counts")
                 is_limit_hit_before_stop = (is_limit_hit and
@@ -889,7 +892,7 @@ class _Broker:
 
             # Adjust price to include commission (or bid-ask spread).
             # In long positions, the adjusted price is a fraction higher, and vice versa.
-            adjusted_price = self._adjusted_price(order.size, price)
+            adjusted_price = self._adjusted_price(order.size, price, make = not is_market_order)
 
             # If order size was specified proportionally,
             # precompute true size in units, accounting for margin and spread/commissions
@@ -1026,7 +1029,9 @@ class Backtest:
                  strategy: Type[Strategy],
                  *,
                  cash: float = 10_000,
-                 commission: float = .0,
+                 limit_activation: float = .0,
+                 taker_commission: float = .0,
+                 maker_commission: float = .0,
                  margin: float = 1.,
                  trade_on_close=False,
                  hedging=False,
@@ -1082,9 +1087,9 @@ class Backtest:
             raise TypeError('`strategy` must be a Strategy sub-type')
         if not isinstance(data, pd.DataFrame):
             raise TypeError("`data` must be a pandas.DataFrame with columns")
-        if not isinstance(commission, Number):
-            raise TypeError('`commission` must be a float value, percent of '
-                            'entry order price')
+        # if not isinstance(commission, Number):
+        #     raise TypeError('`commission` must be a float value, percent of '
+        #                     'entry order price')
 
         data = data.copy(deep=False)
 
@@ -1127,7 +1132,8 @@ class Backtest:
 
         self._data: pd.DataFrame = data
         self._broker = partial(
-            _Broker, cash=cash, commission=commission, margin=margin,
+            _Broker, cash=cash, maker_commission=maker_commission, 
+            taker_commission=taker_commission,margin=margin,limit_activation=limit_activation,
             trade_on_close=trade_on_close, hedging=hedging,
             exclusive_orders=exclusive_orders, index=data.index,
         )
