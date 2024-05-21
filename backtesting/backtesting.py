@@ -708,7 +708,7 @@ class _Broker:
         self._data: _Data = data
         self._cash = cash
         self._maker_commission = maker_commission
-        self._taker_commission = 
+        self._taker_commission = taker_commission
         self._limit_activation = limit_activation
         self._leverage = 1 / margin
         self._trade_on_close = trade_on_close
